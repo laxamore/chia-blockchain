@@ -172,14 +172,6 @@ class Farmer:
 
     @contextlib.asynccontextmanager
     async def manage(self) -> AsyncIterator[None]:
-        await self._start()
-        try:
-            yield
-        finally:
-            self._close()
-            await self._await_closed()
-
-    async def _start(self) -> None:
         async def start_task() -> None:
             # `Farmer.setup_keys` returns `False` if there are no keys setup yet. In this case we just try until it
             # succeeds or until we need to shut down.
@@ -194,15 +186,16 @@ class Farmer:
 
         asyncio.create_task(start_task())
 
-    def _close(self) -> None:
-        self._shut_down = True
+        try:
+            yield
+        finally:
+            self._shut_down = True
 
-    async def _await_closed(self) -> None:
-        if self.cache_clear_task is not None:
-            await self.cache_clear_task
-        if self.update_pool_state_task is not None:
-            await self.update_pool_state_task
-        self.started = False
+            if self.cache_clear_task is not None:
+                await self.cache_clear_task
+            if self.update_pool_state_task is not None:
+                await self.update_pool_state_task
+            self.started = False
 
     def get_connections(self, request_node_type: Optional[NodeType]) -> List[Dict[str, Any]]:
         return default_get_connections(server=self.server, request_node_type=request_node_type)
