@@ -75,7 +75,6 @@ async def test_get_private_key_missing_key(
     key = await node.get_key(fingerprint)
 
     assert key is None
-    assert isinstance(key, PrivateKey)
 
 
 @pytest.mark.asyncio

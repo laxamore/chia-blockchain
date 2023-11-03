@@ -42,6 +42,18 @@ async def test_add_private_key(keychain_proxy: KeychainProxy) -> None:
     assert key == TEST_KEY_3
 
 
+@pytest.mark.asyncio
+async def test_add_public_key(keychain_proxy: KeychainProxy) -> None:
+    keychain = keychain_proxy
+    await keychain.add_public_key(bytes(TEST_KEY_3.public_key).hex(), TEST_KEY_3.label)
+    with pytest.raises(Exception, match="already exists"):
+        await keychain.add_public_key(bytes(TEST_KEY_3.public_key).hex(), "")
+    key = await keychain.get_key(TEST_KEY_3.fingerprint, include_secrets=False)
+    assert key is not None
+    assert key.public_key == TEST_KEY_3.public_key
+    assert key.secrets is None
+
+
 @pytest.mark.parametrize("include_secrets", [True, False])
 @pytest.mark.asyncio
 async def test_get_key(keychain_proxy_with_keys: KeychainProxy, include_secrets: bool) -> None:
