@@ -104,6 +104,35 @@ def add_cmd(ctx: click.Context, filename: str, label: Optional[str]) -> None:
     query_and_add_private_key_seed(mnemonic, label)
     check_keys(ctx.obj["root_path"])
 
+@keys_cmd.command("add_public", help="Add a key by public key")
+@click.option(
+    "--pk",
+    "-p",
+    default=None,
+    help="The public key to add",
+    type=str,
+    required=True,
+)
+@click.option(
+    "--label",
+    "-l",
+    default=None,
+    help="Enter the label for the key",
+    type=str,
+    required=False,
+)
+@click.pass_context
+def add_public_cmd(ctx: click.Context, pk: str, label: Optional[str]) -> None:
+    from .init_funcs import check_keys
+    from .keys_funcs import add_public_key_seed
+
+    # pk to G1Element
+    from blspy import G1Element
+    pk_g1 = G1Element.from_bytes(bytes.fromhex(pk))
+
+    add_public_key_seed(pk_g1, label)
+    check_keys(ctx.obj["root_path"])
+
 
 @keys_cmd.group("label", help="Manage your key labels")
 def label_cmd() -> None:

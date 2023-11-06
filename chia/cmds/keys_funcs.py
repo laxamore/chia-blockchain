@@ -14,7 +14,7 @@ from chia.consensus.coinbase import create_puzzlehash_for_pk
 from chia.types.signing_mode import SigningMode
 from chia.util.bech32m import encode_puzzle_hash
 from chia.util.config import load_config
-from chia.util.errors import KeychainException
+from chia.util.errors import KeychainException, KeychainSecretsMissing
 from chia.util.file_keyring import MAX_LABEL_LENGTH
 from chia.util.ints import uint32
 from chia.util.keychain import Keychain, KeyData, bytes_to_mnemonic, generate_mnemonic, mnemonic_to_seed
@@ -24,6 +24,7 @@ from chia.wallet.derive_keys import (
     master_sk_to_pool_sk,
     master_sk_to_wallet_sk,
     master_sk_to_wallet_sk_unhardened,
+    master_pk_to_wallet_pk_unhardened,
 )
 
 
@@ -81,6 +82,19 @@ def add_private_key_seed(mnemonic: str, label: Optional[str]) -> None:
         sk = Keychain().add_private_key(mnemonic, label)
         fingerprint = sk.get_g1().get_fingerprint()
         print(f"Added private key with public key fingerprint {fingerprint}")
+
+    except (ValueError, KeychainException) as e:
+        print(e)
+
+def add_public_key_seed(pk: G1Element, label: Optional[str]) -> None:
+    """
+    Add a public key seed to the keyring, with the given pk and an optional label.
+    """
+    unlock_keyring()
+    try:
+        Keychain().add_public_key(pk, label)
+        fingerprint = pk.get_fingerprint()
+        print(f"Added public key with public key fingerprint {fingerprint}")
 
     except (ValueError, KeychainException) as e:
         print(e)
@@ -148,34 +162,40 @@ def show_keys(
         return None
 
     if not json_output:
-        msg = "Showing all public keys derived from your master seed and private key:"
+        msg = "Showing all public keys:"
         if show_mnemonic:
             msg = "Showing all public and private keys"
         print(msg)
 
     def process_key_data(key_data: KeyData) -> Dict[str, Any]:
         key: Dict[str, Any] = {}
-        sk = key_data.private_key
         if key_data.label is not None:
             key["label"] = key_data.label
 
         key["fingerprint"] = key_data.fingerprint
         key["master_pk"] = bytes(key_data.public_key).hex()
-        key["farmer_pk"] = bytes(master_sk_to_farmer_sk(sk).get_g1()).hex()
-        key["pool_pk"] = bytes(master_sk_to_pool_sk(sk).get_g1()).hex()
-        first_wallet_sk: PrivateKey = (
-            master_sk_to_wallet_sk(sk, uint32(0))
-            if non_observer_derivation
-            else master_sk_to_wallet_sk_unhardened(sk, uint32(0))
-        )
-        wallet_address: str = encode_puzzle_hash(create_puzzlehash_for_pk(first_wallet_sk.get_g1()), prefix)
-        key["wallet_address"] = wallet_address
-        key["non_observer"] = non_observer_derivation
+        try:
+            sk = key_data.private_key
+            key["farmer_pk"] = bytes(master_sk_to_farmer_sk(sk).get_g1()).hex()
+            key["pool_pk"] = bytes(master_sk_to_pool_sk(sk).get_g1()).hex()
+            first_wallet_sk: PrivateKey = (
+                master_sk_to_wallet_sk(sk, uint32(0))
+                if non_observer_derivation
+                else master_sk_to_wallet_sk_unhardened(sk, uint32(0))
+            )
+            wallet_address: str = encode_puzzle_hash(create_puzzlehash_for_pk(first_wallet_sk.get_g1()), prefix)
+            key["wallet_address"] = wallet_address
+            key["non_observer"] = non_observer_derivation
 
-        if show_mnemonic:
-            key["master_sk"] = bytes(sk).hex()
-            key["wallet_sk"] = bytes(master_sk_to_wallet_sk(sk, uint32(0))).hex()
-            key["mnemonic"] = bytes_to_mnemonic(key_data.entropy)
+            if show_mnemonic:
+                key["master_sk"] = bytes(sk).hex()
+                key["wallet_sk"] = bytes(master_sk_to_wallet_sk(sk, uint32(0))).hex()
+                key["mnemonic"] = bytes_to_mnemonic(key_data.entropy)
+        except KeychainSecretsMissing:
+            first_wallet_pk = master_pk_to_wallet_pk_unhardened(key_data.public_key, uint32(0))
+            wallet_address: str = encode_puzzle_hash(create_puzzlehash_for_pk(first_wallet_pk), prefix)
+            key["wallet_address"] = wallet_address
+            key["non_observer"] = False
         return key
 
     keys = [process_key_data(key) for key in all_keys]
@@ -189,14 +209,18 @@ def show_keys(
                 print("Label:", key["label"])
             print("Fingerprint:", key["fingerprint"])
             print("Master public key (m):", key["master_pk"])
-            print("Farmer public key (m/12381/8444/0/0):", key["farmer_pk"])
-            print("Pool public key (m/12381/8444/1/0):", key["pool_pk"])
-            print(f"First wallet address{' (non-observer)' if key['non_observer'] else ''}: {key['wallet_address']}")
-            if show_mnemonic:
-                print("Master private key (m):", key["master_sk"])
-                print("First wallet secret key (m/12381/8444/2/0):", key["wallet_sk"])
-                print("  Mnemonic seed (24 secret words):")
-                print(key["mnemonic"])
+            if "farmer_pk" in key:
+                print("Farmer public key (m/12381/8444/0/0):", key["farmer_pk"])
+            if "pool_pk" in key:
+                print("Pool public key (m/12381/8444/1/0):", key["pool_pk"])
+            if "wallet_address" in key or "non_observer" in key:
+                print(f"First wallet address{' (non-observer)' if key['non_observer'] else ''}: {key['wallet_address']}")
+            if "master_sk" in key:
+                if show_mnemonic:
+                    print("Master private key (m):", key["master_sk"])
+                    print("First wallet secret key (m/12381/8444/2/0):", key["wallet_sk"])
+                    print("  Mnemonic seed (24 secret words):")
+                    print(key["mnemonic"])
 
 
 def delete(fingerprint: int) -> None:

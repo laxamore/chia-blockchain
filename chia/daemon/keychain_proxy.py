@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from aiohttp import ClientConnectorError, ClientSession
-from blspy import AugSchemeMPL, PrivateKey
+from blspy import AugSchemeMPL, PrivateKey, G1Element
 
 from chia.cmds.init_funcs import check_keys
 from chia.daemon.client import DaemonProxy
@@ -347,6 +347,28 @@ class KeychainProxy(DaemonProxy):
                 self.handle_error(response)
 
         return key
+    
+    async def get_pk_for_fingerprint(self, fingerprint: Optional[int]) -> Optional[G1Element]:
+        """
+        Locates and returns a public key matching the provided fingerprint
+        """
+        pk: Optional[G1Element] = None
+        all_pks = Keychain().get_all_public_keys()
+
+        if len(all_pks) == 0:
+            raise KeychainIsEmpty()
+        else:
+            if fingerprint is not None:
+                for pk in all_pks:
+                    if pk.get_fingerprint() == fingerprint:
+                        pk = pk
+                        break
+                if pk is None:
+                    raise KeychainKeyNotFound(fingerprint)
+            else:
+                pk = all_pks[0]
+
+        return pk
 
     async def get_key(self, fingerprint: int, include_secrets: bool = False) -> Optional[KeyData]:
         """

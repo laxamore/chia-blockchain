@@ -57,10 +57,12 @@ from chia.wallet.derivation_record import DerivationRecord
 from chia.wallet.derive_keys import (
     _derive_path,
     _derive_path_unhardened,
+    _derive_path_unhardened_pk,
     master_sk_to_wallet_sk,
     master_sk_to_wallet_sk_intermediate,
     master_sk_to_wallet_sk_unhardened,
     master_sk_to_wallet_sk_unhardened_intermediate,
+    master_pk_to_wallet_pk_unhardened_intermediate,
 )
 from chia.wallet.did_wallet.did_info import DIDCoinData
 from chia.wallet.did_wallet.did_wallet import DIDWallet
@@ -153,6 +155,7 @@ class WalletStateManager:
     main_wallet: Wallet
     wallets: Dict[uint32, WalletProtocol[Any]]
     private_key: PrivateKey
+    public_key: G1Element
 
     trade_manager: TradeManager
     notification_manager: NotificationManager
@@ -173,13 +176,14 @@ class WalletStateManager:
 
     @staticmethod
     async def create(
-        private_key: PrivateKey,
+        public_key: G1Element,
         config: Dict[str, Any],
         db_path: Path,
         constants: ConsensusConstants,
         server: ChiaServer,
         root_path: Path,
         wallet_node: WalletNode,
+        private_key: PrivateKey = None,
     ) -> WalletStateManager:
         self = WalletStateManager()
         self.config = config
@@ -189,7 +193,7 @@ class WalletStateManager:
         self.log = logging.getLogger(__name__)
         self.lock = asyncio.Lock()
         self.log.debug(f"Starting in db path: {db_path}")
-        fingerprint = private_key.get_g1().get_fingerprint()
+        fingerprint = public_key.get_fingerprint()
         sql_log_path: Optional[Path] = None
         if self.config.get("log_sqlite_cmds", False):
             sql_log_path = path_from_root(self.root_path, "log/wallet_sql.log")
@@ -235,6 +239,7 @@ class WalletStateManager:
         assert main_wallet_info is not None
 
         self.private_key = private_key
+        self.public_key = public_key
         self.main_wallet = await Wallet.create(self, main_wallet_info)
 
         self.wallets = {main_wallet_info.id: self.main_wallet}
@@ -387,32 +392,38 @@ class WalletStateManager:
                     f"Creating puzzle hashes from {start_index} to {last_index - 1} for wallet_id: {wallet_id}"
                 )
                 self.log.info(f"Start: {creating_msg}")
-                intermediate_sk = master_sk_to_wallet_sk_intermediate(self.private_key)
-                intermediate_sk_un = master_sk_to_wallet_sk_unhardened_intermediate(self.private_key)
+                if self.private_key is not None:
+                    intermediate_sk = master_sk_to_wallet_sk_intermediate(self.private_key)
+                    # intermediate_sk_un = master_sk_to_wallet_sk_unhardened_intermediate(self.private_key)
+                else:
+                    intermediate_pk_un = master_pk_to_wallet_pk_unhardened_intermediate(self.public_key)
                 for index in range(start_index, last_index):
                     if target_wallet.type() == WalletType.POOLING_WALLET:
                         continue
 
-                    # Hardened
-                    pubkey: G1Element = _derive_path(intermediate_sk, [index]).get_g1()
-                    puzzlehash: Optional[bytes32] = target_wallet.puzzle_hash_for_pk(pubkey)
-                    if puzzlehash is None:
-                        self.log.error(f"Unable to create puzzles with wallet {target_wallet}")
-                        break
-                    self.log.debug(f"Puzzle at index {index} wallet ID {wallet_id} puzzle hash {puzzlehash.hex()}")
-                    new_paths = True
-                    derivation_paths.append(
-                        DerivationRecord(
-                            uint32(index),
-                            puzzlehash,
-                            pubkey,
-                            target_wallet.type(),
-                            uint32(target_wallet.id()),
-                            True,
+                    if self.private_key is not None:
+                        # Hardened
+                        pubkey: G1Element = _derive_path(intermediate_sk, [index]).get_g1()
+                        puzzlehash: Optional[bytes32] = target_wallet.puzzle_hash_for_pk(pubkey)
+                        if puzzlehash is None:
+                            self.log.error(f"Unable to create puzzles with wallet {target_wallet}")
+                            break
+                        self.log.debug(f"Puzzle at index {index} wallet ID {wallet_id} puzzle hash {puzzlehash.hex()}")
+                        new_paths = True
+                        derivation_paths.append(
+                            DerivationRecord(
+                                uint32(index),
+                                puzzlehash,
+                                pubkey,
+                                target_wallet.type(),
+                                uint32(target_wallet.id()),
+                                True,
+                            )
                         )
-                    )
+
                     # Unhardened
-                    pubkey_unhardened: G1Element = _derive_path_unhardened(intermediate_sk_un, [index]).get_g1()
+                    # pubkey_unhardened: G1Element = _derive_path_unhardened(intermediate_sk_un, [index]).get_g1()
+                    pubkey_unhardened: G1Element = _derive_path_unhardened_pk(intermediate_pk_un, [index])
                     puzzlehash_unhardened: Optional[bytes32] = target_wallet.puzzle_hash_for_pk(pubkey_unhardened)
                     if puzzlehash_unhardened is None:
                         self.log.error(f"Unable to create puzzles with wallet {target_wallet}")
