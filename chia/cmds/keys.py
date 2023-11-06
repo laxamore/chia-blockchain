@@ -404,12 +404,11 @@ def wallet_address_cmd(
 
     fingerprint: Optional[int] = ctx.obj.get("fingerprint", None)
     filename: Optional[str] = ctx.obj.get("filename", None)
-    private_key = resolve_derivation_master_key(filename if filename is not None else fingerprint)
+    private_key, public_key = resolve_derivation_master_key(filename if filename is not None else fingerprint)
 
     derive_wallet_address(
-        ctx.obj["root_path"], private_key, index, count, prefix, non_observer_derivation, show_hd_path
+        ctx.obj["root_path"], private_key, public_key, index, count, prefix, non_observer_derivation, show_hd_path
     )
-
 
 @derive_cmd.command("child-key", help="Derive child keys")
 @click.option(

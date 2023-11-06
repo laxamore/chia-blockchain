@@ -280,21 +280,33 @@ class Keychain:
         Returns the parsed keychain contents for a specific 'user' (key index). The content
         is represented by the class `KeyData`.
         """
+        is_public_only = False
         user = get_private_key_user(self.user, index)
         read_str = self.keyring_wrapper.get_passphrase(self.service, user)
         if read_str is None or len(read_str) == 0:
-            raise KeychainUserNotFound(self.service, user)
+            is_public_only = True
+            user = get_public_key_user(self.user, index)
+            read_str = self.keyring_wrapper.get_passphrase(self.service, user)
+
+            if read_str is None or len(read_str) == 0:
+                raise KeychainUserNotFound(self.service, user)
+
         str_bytes = bytes.fromhex(read_str)
 
         public_key = G1Element.from_bytes(str_bytes[: G1Element.SIZE])
         fingerprint = public_key.get_fingerprint()
         entropy = str_bytes[G1Element.SIZE : G1Element.SIZE + 32]
+        
+        if include_secrets and not is_public_only:
+            secrets = KeyDataSecrets.from_entropy(entropy)
+        else:
+            secrets = None
 
         return KeyData(
             fingerprint=uint32(fingerprint),
             public_key=public_key,
             label=self.keyring_wrapper.get_label(fingerprint),
-            secrets=KeyDataSecrets.from_entropy(entropy) if include_secrets else None,
+            secrets=secrets,
         )
     
     def _get_pk_sk_key_data(self, index: int, include_secrets: bool = True) -> KeyData:
@@ -321,6 +333,7 @@ class Keychain:
                 label=self.keyring_wrapper.get_label(fingerprint),
                 secrets=None,
             )
+        return keydata
 
 
     def _get_free_private_key_index(self) -> int:
@@ -443,7 +456,7 @@ class Keychain:
             try:
                 key_data = self._get_key_data(index)
                 all_keys.append((key_data.private_key, key_data.entropy))
-            except KeychainUserNotFound:
+            except (KeychainUserNotFound, KeychainSecretsMissing):
                 pass
         return all_keys
 
@@ -457,7 +470,7 @@ class Keychain:
             try:
                 key_data = self._get_key_data(index)
                 all_keys.append((key_data.private_key, key_data.entropy, key_data.public_key))
-            except KeychainUserNotFound:
+            except (KeychainUserNotFound, KeychainSecretsMissing):
                 try:
                     key_data = self._get_pk_sk_key_data(index)
                     all_keys.append((None, None, key_data.public_key))

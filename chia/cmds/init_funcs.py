@@ -35,9 +35,11 @@ from chia.util.ssl_check import (
 from chia.wallet.derive_keys import (
     _derive_path,
     _derive_path_unhardened,
+    _derive_path_unhardened_pk,
     master_sk_to_pool_sk,
     master_sk_to_wallet_sk_intermediate,
     master_sk_to_wallet_sk_unhardened_intermediate,
+    master_pk_to_wallet_pk_unhardened_intermediate
 )
 
 
@@ -71,15 +73,6 @@ def check_keys(new_root: Path, keychain: Optional[Keychain] = None) -> None:
         return None
 
     with lock_and_load_config(new_root, "config.yaml") as config:
-        # pool_child_pubkeys = [master_sk_to_pool_sk(sk).get_g1() ]
-        pool_child_pubkeys = []
-        for sk, _, _ in all_keys:
-            if sk is not None:
-                pool_child_pubkeys.append(master_sk_to_pool_sk(sk).get_g1())
-
-        if len(pool_child_pubkeys) == 0:
-            return
-
         all_targets = []
         stop_searching_for_farmer = "xch_target_address" not in config["farmer"]
         stop_searching_for_pool = "xch_target_address" not in config["pool"]
@@ -87,28 +80,57 @@ def check_keys(new_root: Path, keychain: Optional[Keychain] = None) -> None:
         selected = config["selected_network"]
         prefix = config["network_overrides"]["config"][selected]["address_prefix"]
 
+        pool_child_pubkeys = []
+        for sk, _, pk in all_keys:
+            if sk is not None:
+                pool_child_pubkeys.append(master_sk_to_pool_sk(sk).get_g1())
+            else:
+                pool_child_pubkeys.append(pk)
+
         intermediates = {}
-        for sk, _, _ in all_keys:
-            intermediates[bytes(sk)] = {
-                "observer": master_sk_to_wallet_sk_unhardened_intermediate(sk),
-                "non-observer": master_sk_to_wallet_sk_intermediate(sk),
-            }
+        for sk, _, pk in all_keys:
+            if sk is not None:
+                intermediates[bytes(sk)] = {
+                    "observer": master_sk_to_wallet_sk_unhardened_intermediate(sk),
+                    "non-observer": master_sk_to_wallet_sk_intermediate(sk),
+                }
+            else:
+                intermediates[bytes(pk)] = {
+                    "observer": master_pk_to_wallet_pk_unhardened_intermediate(pk),
+                    "non-observer": None,
+                }
 
         for i in range(number_of_ph_to_search):
             if stop_searching_for_farmer and stop_searching_for_pool and i > 0:
                 break
-            for sk, _, _ in all_keys:
-                intermediate_n = intermediates[bytes(sk)]["non-observer"]
-                intermediate_o = intermediates[bytes(sk)]["observer"]
+            for sk, _, pk in all_keys:
+                if sk is not None:
+                    intermediate_n = intermediates[bytes(sk)]["non-observer"]
+                    intermediate_o = intermediates[bytes(sk)]["observer"]
 
-                all_targets.append(
-                    encode_puzzle_hash(
-                        create_puzzlehash_for_pk(_derive_path_unhardened(intermediate_o, [i]).get_g1()), prefix
+                    all_targets.append(
+                        encode_puzzle_hash(
+                            create_puzzlehash_for_pk(_derive_path_unhardened(intermediate_o, [i]).get_g1()), prefix
+                        )
                     )
-                )
-                all_targets.append(
-                    encode_puzzle_hash(create_puzzlehash_for_pk(_derive_path(intermediate_n, [i]).get_g1()), prefix)
-                )
+
+                    all_targets.append(
+                        encode_puzzle_hash(create_puzzlehash_for_pk(_derive_path(intermediate_n, [i]).get_g1()), prefix)
+                    )
+                else:
+                    intermediate_n = None
+                    intermediate_o = intermediates[bytes(pk)]["observer"]
+
+                    all_targets.append(
+                        encode_puzzle_hash(
+                            create_puzzlehash_for_pk(_derive_path_unhardened_pk(intermediate_o, [i])), prefix
+                        )
+                    )
+
+                    all_targets.append(
+                        None
+                    )
+
                 if all_targets[-1] == config["farmer"].get("xch_target_address") or all_targets[-2] == config[
                     "farmer"
                 ].get("xch_target_address"):

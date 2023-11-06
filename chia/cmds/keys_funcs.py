@@ -591,7 +591,8 @@ def search_derive(
 
 def derive_wallet_address(
     root_path: Path,
-    private_key: PrivateKey,
+    private_key: Optional[PrivateKey],
+    public_key: G1Element,
     index: int,
     count: int,
     prefix: Optional[str],
@@ -611,13 +612,13 @@ def derive_wallet_address(
     for i in path_indices:
         wallet_hd_path_root += f"{i}{'n' if non_observer_derivation else ''}/"
     for i in range(index, index + count):
-        if non_observer_derivation:
-            sk = master_sk_to_wallet_sk(private_key, uint32(i))
+        if non_observer_derivation and private_key is not None:
+            pk = master_sk_to_wallet_sk(private_key, uint32(i)).get_g1()
         else:
-            sk = master_sk_to_wallet_sk_unhardened(private_key, uint32(i))
+            pk = master_pk_to_wallet_pk_unhardened(public_key, uint32(i))
         # Generate a wallet address using the standard p2_delegated_puzzle_or_hidden_puzzle puzzle
         # TODO: consider generating addresses using other puzzles
-        address = encode_puzzle_hash(create_puzzlehash_for_pk(sk.get_g1()), prefix)
+        address = encode_puzzle_hash(create_puzzlehash_for_pk(pk), prefix)
         if show_hd_path:
             print(
                 f"Wallet address {i} "
@@ -704,17 +705,21 @@ def derive_child_key(
                 print(f"{key_type_str} private key {i}{hd_path}: {private_key_string_repr(sk)}")
 
 
-def private_key_for_fingerprint(fingerprint: int) -> Optional[PrivateKey]:
+def key_for_fingerprint(fingerprint: int) -> (Optional[PrivateKey], Optional[G1Element]):
     unlock_keyring()
-    private_keys = Keychain().get_all_private_keys()
+    keys = Keychain().get_all_private_and_public_keys()
 
-    for sk, _ in private_keys:
-        if sk.get_g1().get_fingerprint() == fingerprint:
-            return sk
-    return None
+    for sk, _, pk in keys:
+        if sk is not None:
+            if sk.get_g1().get_fingerprint() == fingerprint:
+                return sk, sk.get_g1()
+        else:
+            if pk.get_fingerprint() == fingerprint:
+                return None, pk
+    return None, None
 
 
-def get_private_key_with_fingerprint_or_prompt(fingerprint: Optional[int]) -> Optional[PrivateKey]:
+def get_key_with_fingerprint_or_prompt(fingerprint: Optional[int]) -> (Optional[PrivateKey], Optional[G1Element]):
     """
     Get a private key with the specified fingerprint. If fingerprint is not
     specified, prompt the user to select a key.
@@ -722,7 +727,7 @@ def get_private_key_with_fingerprint_or_prompt(fingerprint: Optional[int]) -> Op
 
     # Return the private key matching the specified fingerprint
     if fingerprint is not None:
-        return private_key_for_fingerprint(fingerprint)
+        return key_for_fingerprint(fingerprint)
 
     fingerprints: List[int] = [pk.get_fingerprint() for pk in Keychain().get_all_public_keys()]
     while True:
@@ -743,7 +748,7 @@ def get_private_key_with_fingerprint_or_prompt(fingerprint: Optional[int]) -> Op
                     val = None
                     continue
                 else:
-                    return private_key_for_fingerprint(fingerprints[index])
+                    return key_for_fingerprint(fingerprints[index])
 
 
 def private_key_from_mnemonic_seed_file(filename: Path) -> PrivateKey:
@@ -756,7 +761,7 @@ def private_key_from_mnemonic_seed_file(filename: Path) -> PrivateKey:
     return AugSchemeMPL.key_gen(seed)
 
 
-def resolve_derivation_master_key(fingerprint_or_filename: Optional[Union[int, str, Path]]) -> PrivateKey:
+def resolve_derivation_master_key(fingerprint_or_filename: Optional[Union[int, str, Path]]) -> (PrivateKey, G1Element):
     """
     Given a key fingerprint of file containing a mnemonic seed, return the private key.
     """
@@ -764,9 +769,12 @@ def resolve_derivation_master_key(fingerprint_or_filename: Optional[Union[int, s
     if fingerprint_or_filename is not None and (
         isinstance(fingerprint_or_filename, str) or isinstance(fingerprint_or_filename, Path)
     ):
-        return private_key_from_mnemonic_seed_file(Path(os.fspath(fingerprint_or_filename)))
+        sk = private_key_from_mnemonic_seed_file(Path(os.fspath(fingerprint_or_filename)))
+        return sk, sk.get_g1()
     else:
-        ret = get_private_key_with_fingerprint_or_prompt(fingerprint_or_filename)
-        if ret is None:
-            raise ValueError("Abort. No private key")
-        return ret
+        sk, pk = get_key_with_fingerprint_or_prompt(fingerprint_or_filename)
+
+        if sk is None and pk is None:
+            raise ValueError("No private key and public key found")
+
+        return sk, pk
