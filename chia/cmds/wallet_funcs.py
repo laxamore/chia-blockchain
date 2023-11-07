@@ -6,6 +6,7 @@ import os
 import pathlib
 import sys
 import time
+import json
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -53,7 +54,6 @@ transaction_type_descriptions = {
     TransactionType.INCOMING_CLAWBACK_SEND: "received in clawback as sender",
     TransactionType.OUTGOING_CLAWBACK: "claim/clawback",
 }
-
 
 def transaction_description_from_type(tx: TransactionRecord) -> str:
     return transaction_type_descriptions.get(TransactionType(tx.type), "(unknown reason)")
@@ -181,6 +181,7 @@ async def get_transactions(
     sort_key: SortKey,
     reverse: bool,
     clawback: bool,
+    print_json: bool,
 ) -> None:  # pragma: no cover
     async with get_wallet_client(wallet_rpc_port, fp) as (wallet_client, fingerprint, config):
         if paginate is None:
@@ -213,6 +214,7 @@ async def get_transactions(
             print(e.args[0])
             return
 
+        json_txs = []
         skipped = 0
         num_per_screen = 5 if paginate else len(txs)
         for i in range(0, len(txs), num_per_screen):
@@ -230,16 +232,33 @@ async def get_transactions(
                         j -= 1
                         skipped += 1
                         continue
-                print_transaction(
-                    txs[i + j + skipped],
-                    verbose=(verbose > 0),
-                    name=name,
-                    address_prefix=address_prefix,
-                    mojo_per_unit=mojo_per_unit,
-                    coin_record=coin_record,
-                )
+                if not print_json:
+                    print_transaction(
+                        txs[i + j + skipped],
+                        verbose=(verbose > 0),
+                        name=name,
+                        address_prefix=address_prefix,
+                        mojo_per_unit=mojo_per_unit,
+                        coin_record=coin_record,
+                    )
+                else:
+                    json_txs.append(
+                        {
+                            "transaction": f"{txs[i + j + skipped].name}",
+                            "status": txs[i + j + skipped].confirmed,
+                            "chia_amount": f"{Decimal(int(txs[i + j + skipped].amount)) / mojo_per_unit}",
+                            "to_address": encode_puzzle_hash(txs[i + j + skipped].to_puzzle_hash, address_prefix),
+                            "created_at_time": datetime.fromtimestamp(txs[i + j + skipped].created_at_time).strftime("%Y-%m-%d %H:%M:%S"),
+                        }
+                    )
+
+            if print_json:
+                print(json.dumps(json_txs, indent=4))
+                return
+            
             if i + num_per_screen >= len(txs):
                 return None
+
             print("Press q to quit, or c to continue")
             while True:
                 entered_key = sys.stdin.read(1)

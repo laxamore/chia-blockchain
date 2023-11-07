@@ -101,6 +101,12 @@ def get_transaction_cmd(wallet_rpc_port: Optional[int], fingerprint: int, id: in
     default=False,
     help="Only show clawback transactions",
 )
+@click.option(
+    "--print-json",
+    is_flag=True,
+    default=False,
+    help="Print all transactions without paginate as JSON",
+)
 def get_transactions_cmd(
     wallet_rpc_port: Optional[int],
     fingerprint: int,
@@ -112,6 +118,7 @@ def get_transactions_cmd(
     sort_key: SortKey,
     reverse: bool,
     clawback: bool,
+    print_json: Optional[bool],
 ) -> None:  # pragma: no cover
     from .wallet_funcs import get_transactions
 
@@ -121,12 +128,13 @@ def get_transactions_cmd(
             fp=fingerprint,
             wallet_id=id,
             verbose=verbose,
-            paginate=paginate,
+            paginate=paginate if print_json is False else False,
             offset=offset,
             limit=limit,
             sort_key=sort_key,
             reverse=reverse,
             clawback=clawback,
+            print_json=print_json,
         )
     )
 
